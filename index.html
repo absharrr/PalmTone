@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Palmtone — play music with your hand</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Work+Sans:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+<style>
+  :root{
+    --ink:      #14120F;
+    --ink-2:    #1D1A15;
+    --amber:    #E8A94C;
+    --amber-dim:#8C6A34;
+    --teal:     #4FD1C5;
+    --paper:    #F1ECE3;
+    --paper-dim:#B9B2A4;
+    --danger:   #D9634C;
+  }
+  *{ box-sizing: border-box; }
+  html, body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:var(--ink);
+    color:var(--paper);
+    font-family:'Work Sans', sans-serif;
+  }
+  .display{ font-family:'Space Grotesk', sans-serif; }
+
+  #stage{ position:relative; width:100%; height:100%; }
+
+  video{
+    position:absolute; inset:0; width:100%; height:100%;
+    object-fit:cover; transform:scaleX(-1);
+    filter:grayscale(0.55) brightness(0.4) contrast(1.05);
+  }
+  canvas{
+    position:absolute; inset:0; width:100%; height:100%;
+    mix-blend-mode:screen;
+  }
+
+  #vignette{
+    position:absolute; inset:0; pointer-events:none;
+    background:radial-gradient(ellipse at center, transparent 45%, rgba(20,18,15,0.92) 100%);
+  }
+
+  #panel{
+    position:absolute; top:0; left:0; right:0;
+    padding:22px 24px 16px;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    z-index:5;
+  }
+  #title{ display:flex; flex-direction:column; gap:2px; }
+  #title h1{
+    margin:0; font-size:22px; font-weight:600; letter-spacing:0.01em;
+    color:var(--paper);
+  }
+  #title p{ margin:0; font-size:12.5px; color:var(--paper-dim); max-width:280px; line-height:1.4; }
+
+  #controls{ display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
+
+  select{
+    background:var(--ink-2); color:var(--paper); border:1px solid #3A342A;
+    border-radius:7px; padding:6px 10px; font-family:'Work Sans',sans-serif;
+    font-size:12.5px; cursor:pointer;
+  }
+  select:focus{ outline:2px solid var(--amber); }
+
+  #noteReadout{
+    font-family:'Space Grotesk', sans-serif; font-size:13px; color:var(--amber);
+    min-height:16px; letter-spacing:0.02em;
+  }
+
+  #startWrap{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    background:var(--ink); z-index:20; flex-direction:column; gap:22px; text-align:center;
+    padding:0 28px;
+  }
+  #startWrap.hidden{ display:none; }
+  #startWrap h1{
+    font-size:34px; margin:0; font-weight:600; color:var(--paper);
+    letter-spacing:-0.01em;
+  }
+  #startWrap h1 em{ color:var(--amber); font-style:normal; }
+  #startWrap p{
+    margin:0; max-width:360px; font-size:14.5px; line-height:1.6; color:var(--paper-dim);
+  }
+  #startWrap .gestures{
+    display:flex; flex-direction:column; gap:6px; font-size:13.5px; color:var(--paper);
+    background:var(--ink-2); border:1px solid #3A342A; border-radius:10px;
+    padding:14px 18px; text-align:left;
+  }
+  #startWrap .gestures b{ color:var(--teal); }
+  button#begin{
+    background:var(--amber); color:var(--ink); border:none; border-radius:9px;
+    padding:12px 30px; font-size:15px; font-weight:600; font-family:'Space Grotesk',sans-serif;
+    cursor:pointer; letter-spacing:0.01em;
+  }
+  button#begin:hover{ background:#f0b968; }
+  button#begin:disabled{ background:#5c5142; color:#a89f8c; cursor:default; }
+
+  #hint{
+    font-size:12.5px; color:var(--paper-dim); min-height:16px;
+  }
+
+  #errorBox{
+    position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+    background:var(--ink); z-index:30; text-align:center; padding:0 30px;
+  }
+  #errorBox.show{ display:flex; flex-direction:column; gap:10px; }
+  #errorBox h2{ margin:0; font-size:20px; color:var(--danger); font-family:'Space Grotesk',sans-serif; }
+  #errorBox p{ margin:0; color:var(--paper-dim); font-size:13.5px; max-width:320px; }
+
+  @media (max-width: 520px){
+    #panel{ flex-direction:column; gap:14px; }
+    #controls{ align-items:flex-start; width:100%; }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <video id="cam" autoplay playsinline muted></video>
+  <canvas id="fx"></canvas>
+  <div id="vignette"></div>
+
+  <div id="panel">
+    <div id="title">
+      <h1>palm<em style="color:var(--amber)">tone</em></h1>
+      <p>Point one finger to play a note. Open and spread your hand to swell a chord. Make a fist to go quiet.</p>
+    </div>
+    <div id="controls">
+      <select id="instrumentSelect" aria-label="Instrument">
+        <option value="theremin">theremin</option>
+        <option value="marimba">marimba</option>
+        <option value="bell">bell</option>
+        <option value="bass">bass</option>
+      </select>
+      <select id="scaleSelect" aria-label="Scale">
+        <option value="pentatonic">pentatonic</option>
+        <option value="major">major</option>
+        <option value="minor">natural minor</option>
+        <option value="blues">blues</option>
+      </select>
+      <div id="noteReadout">&nbsp;</div>
+    </div>
+  </div>
+</div>
+
+<div id="startWrap">
+  <h1>play music<br>with your <em>hand</em></h1>
+  <p>Palmtone turns a webcam into an instrument. Height sets pitch, side to side shapes the tone — needs camera access.</p>
+  <div class="gestures">
+    <div><b>Point</b> one finger — hold a note, slide to bend pitch</div>
+    <div><b>Open &amp; spread</b> your hand — swell a chord</div>
+    <div><b>Fist</b> — silence</div>
+  </div>
+  <button id="begin">begin</button>
+  <div id="hint">&nbsp;</div>
+</div>
+
+<div id="errorBox">
+  <h2>no hand, no harmony</h2>
+  <p>Palmtone needs camera access to see your hand. Check your browser's site permissions and reload the page to try again.</p>
+</div>
+
+<script type="module">
+import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+
+const video = document.getElementById('cam');
+const canvas = document.getElementById('fx');
+const ctx = canvas.getContext('2d');
+const startWrap = document.getElementById('startWrap');
+const beginBtn = document.getElementById('begin');
+const hint = document.getElementById('hint');
+const errorBox = document.getElementById('errorBox');
+const noteReadout = document.getElementById('noteReadout');
+const scaleSelect = document.getElementById('scaleSelect');
+const instrumentSelect = document.getElementById('instrumentSelect');
+
+function resize(){
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------- Music theory ----------
+const SCALES = {
+  pentatonic: [0,2,4,7,9],
+  major:      [0,2,4,5,7,9,11],
+  minor:      [0,2,3,5,7,8,10],
+  blues:      [0,3,5,6,7,10]
+};
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const ROOT_MIDI = 55; // G3, sits comfortably for a hand's full vertical range
+const OCTAVE_SPAN = 3;
+const NUM_STEPS = 18;
+
+function midiToFreq(m){ return 440 * Math.pow(2, (m - 69) / 12); }
+function midiToName(m){
+  const n = NOTE_NAMES[((m % 12) + 12) % 12];
+  const oct = Math.floor(m / 12) - 1;
+  return n + oct;
+}
+function buildScaleSteps(scaleName){
+  const intervals = SCALES[scaleName];
+  const steps = [];
+  for(let o = 0; o < OCTAVE_SPAN; o++){
+    for(const iv of intervals){
+      steps.push(ROOT_MIDI + o*12 + iv);
+    }
+  }
+  return steps.slice(0, NUM_STEPS);
+}
+let scaleSteps = buildScaleSteps(scaleSelect.value);
+scaleSelect.addEventListener('change', () => {
+  scaleSteps = buildScaleSteps(scaleSelect.value);
+});
+
+function noteHue(stepIndex){
+  return (stepIndex / NUM_STEPS) * 260 + 20;
+}
+
+// ---------- Audio ----------
+let leadSynth, padSynth, filter, panner, delay, reverb, padPanner, padReverb;
+let audioReady = false;
+let leadIsContinuous = true;
+let leadTranspose = 0;
+
+const INSTRUMENTS = {
+  theremin: { continuous: true,  transpose: 0,   volume: 0  },
+  bass:     { continuous: true,  transpose: -12, volume: 2  },
+  marimba:  { continuous: false, transpose: 0,   volume: 4  },
+  bell:     { continuous: false, transpose: 12,  volume: -2 }
+};
+
+function buildLeadVoice(name){
+  switch(name){
+    case 'bass':
+      return new Tone.MonoSynth({
+        oscillator: { type: 'sawtooth' },
+        portamento: 0.06,
+        filterEnvelope: { attack: 0.02, decay: 0.3, sustain: 0.5, release: 0.6, baseFrequency: 90, octaves: 3 },
+        envelope: { attack: 0.02, decay: 0.25, sustain: 0.55, release: 0.5 }
+      });
+    case 'marimba':
+      return new Tone.PluckSynth({ attackNoise: 1, dampening: 3200, resonance: 0.82 });
+    case 'bell':
+      return new Tone.FMSynth({
+        harmonicity: 3.01, modulationIndex: 14,
+        envelope: { attack: 0.001, decay: 1.1, sustain: 0.04, release: 0.9 },
+        modulationEnvelope: { attack: 0.002, decay: 0.25, sustain: 0, release: 0.25 }
+      });
+    default: // theremin
+      return new Tone.Synth({
+        oscillator: { type: 'sine' },
+        portamento: 0.09,
+        envelope: { attack: 0.04, decay: 0.2, sustain: 0.65, release: 0.5 }
+      });
+  }
+}
+
+function buildChordVoice(name){
+  switch(name){
+    case 'bass':
+      return new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: 'sawtooth' },
+        envelope: { attack: 0.3, decay: 0.3, sustain: 0.4, release: 1.4 }
+      });
+    case 'marimba':
+      return new Tone.PolySynth(Tone.PluckSynth, { attackNoise: 1, dampening: 3000, resonance: 0.8 });
+    case 'bell':
+      return new Tone.PolySynth(Tone.FMSynth, {
+        harmonicity: 3, modulationIndex: 10,
+        envelope: { attack: 0.001, decay: 1.0, sustain: 0.05, release: 0.9 }
+      });
+    default: // theremin
+      return new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: 'triangle' },
+        envelope: { attack: 0.5, decay: 0.4, sustain: 0.3, release: 2.0 }
+      });
+  }
+}
+
+function setInstrument(name){
+  const cfg = INSTRUMENTS[name] || INSTRUMENTS.theremin;
+  leadIsContinuous = cfg.continuous;
+  leadTranspose = cfg.transpose;
+
+  if(leadSynth){ leadSynth.triggerRelease && leadSynth.triggerRelease(); leadSynth.dispose(); }
+  leadSynth = buildLeadVoice(name);
+  leadSynth.volume.value = cfg.volume;
+  leadSynth.connect(filter);
+
+  if(padSynth) padSynth.dispose();
+  padSynth = buildChordVoice(name);
+  padSynth.volume.value = cfg.volume - 6;
+  padSynth.connect(padPanner);
+
+  lastPointing = false;
+  lastStepIndex = -1;
+  noteReadout.textContent = '\u00A0';
+}
+
+function setupAudio(){
+  filter = new Tone.Filter(1200, 'lowpass');
+  panner = new Tone.Panner(0);
+  delay = new Tone.FeedbackDelay('8n', 0.18);
+  delay.wet.value = 0.15;
+  reverb = new Tone.Reverb({ decay: 2.2, wet: 0.28 });
+  filter.chain(panner, delay, reverb, Tone.Destination);
+
+  padPanner = new Tone.Panner(0);
+  padReverb = new Tone.Reverb({ decay: 3.2, wet: 0.4 });
+  padPanner.connect(padReverb);
+  padReverb.connect(Tone.Destination);
+
+  setInstrument(instrumentSelect.value);
+  audioReady = true;
+}
+
+instrumentSelect.addEventListener('change', () => {
+  if(audioReady) setInstrument(instrumentSelect.value);
+});
+
+function chordFromStep(stepIndex){
+  const rootMidi = (scaleSteps[stepIndex] ?? scaleSteps[0]) + leadTranspose;
+  const intervals = scaleSelect.value === 'major' || scaleSelect.value === 'minor' ? [0,4,7] : [0,3,7];
+  return intervals.map(iv => midiToFreq(rootMidi + iv));
+}
+
+// ---------- Hand tracking state ----------
+let handLandmarker = null;
+let running = false;
+let lastPointing = false;
+let lastStepIndex = -1;
+let lastOpenSpread = false;
+let lastChordTime = 0;
+const CHORD_COOLDOWN = 1100;
+
+const trail = [];
+const bursts = [];
+
+function curled(lm, tipIdx, pipIdx){
+  return lm[tipIdx].y > lm[pipIdx].y;
+}
+function dist(a, b){
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function classifyHand(lm){
+  const idxCurled = curled(lm, 8, 6);
+  const midCurled = curled(lm, 12, 10);
+  const ringCurled = curled(lm, 16, 14);
+  const pinkyCurled = curled(lm, 20, 18);
+
+  const pointing = !idxCurled && midCurled && ringCurled && pinkyCurled;
+  const allOpen = !idxCurled && !midCurled && !ringCurled && !pinkyCurled;
+
+  const spread = (dist(lm[8], lm[12]) + dist(lm[12], lm[16]) + dist(lm[16], lm[20])) / 3;
+  const openSpread = allOpen && spread > 0.09;
+
+  const fist = idxCurled && midCurled && ringCurled && pinkyCurled;
+
+  return { pointing, openSpread, fist, indexTip: lm[8] };
+}
+
+function updateSound(state){
+  const now = performance.now();
+
+  if(state && state.pointing){
+    const x = 1 - state.indexTip.x; // mirrored
+    const y = state.indexTip.y;
+    const stepIndex = Math.min(NUM_STEPS - 1, Math.max(0, Math.floor((1 - y) * NUM_STEPS)));
+    const midi = scaleSteps[stepIndex] + leadTranspose;
+    const freq = midiToFreq(midi);
+    const cutoff = 300 + x * 3200;
+    const pan = (x - 0.5) * 1.6;
+
+    filter.frequency.rampTo(cutoff, 0.08);
+    panner.pan.rampTo(Math.max(-1, Math.min(1, pan)), 0.08);
+
+    if(leadIsContinuous){
+      if(!lastPointing){
+        leadSynth.triggerAttack(freq);
+      } else {
+        leadSynth.frequency.rampTo(freq, 0.06);
+      }
+    } else if(!lastPointing || stepIndex !== lastStepIndex){
+      if(leadSynth.triggerAttackRelease){
+        leadSynth.triggerAttackRelease(freq, '4n');
+      } else {
+        leadSynth.triggerAttack(freq);
+      }
+    }
+    lastStepIndex = stepIndex;
+    noteReadout.textContent = midiToName(midi) + ' · ' + Math.round(freq) + ' Hz';
+    lastPointing = true;
+  } else if(lastPointing){
+    if(leadIsContinuous) leadSynth.triggerRelease();
+    lastPointing = false;
+    lastStepIndex = -1;
+    noteReadout.textContent = '\u00A0';
+  }
+
+  if(state && state.openSpread){
+    if(!lastOpenSpread && now - lastChordTime > CHORD_COOLDOWN){
+      const x = 1 - state.indexTip.x;
+      const y = state.indexTip.y;
+      const stepIndex = Math.min(NUM_STEPS - 1, Math.max(0, Math.floor((1 - y) * NUM_STEPS)));
+      const freqs = chordFromStep(stepIndex);
+      padPanner.pan.value = Math.max(-1, Math.min(1, (x - 0.5) * 1.6));
+      padSynth.triggerAttackRelease(freqs, 1.6);
+      lastChordTime = now;
+      spawnBurst(state.indexTip.x * canvas.width, state.indexTip.y * canvas.height, noteHue(stepIndex));
+    }
+    lastOpenSpread = true;
+  } else {
+    lastOpenSpread = false;
+  }
+
+  if(state && state.fist && lastPointing){
+    if(leadIsContinuous && leadSynth.triggerRelease) leadSynth.triggerRelease();
+    lastPointing = false;
+    lastStepIndex = -1;
+    noteReadout.textContent = '\u00A0';
+  }
+}
+
+function spawnBurst(x, y, hue){
+  bursts.push({ x, y, hue, r: 4, alpha: 0.9 });
+}
+
+// ---------- Drawing ----------
+const HAND_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],
+  [0,17]
+];
+
+function draw(landmarksList, state){
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if(landmarksList && landmarksList.length){
+    const lm = landmarksList[0];
+    ctx.strokeStyle = 'rgba(232,169,76,0.55)';
+    ctx.lineWidth = 2;
+    for(const [a,b] of HAND_CONNECTIONS){
+      const pa = lm[a], pb = lm[b];
+      ctx.beginPath();
+      ctx.moveTo((1-pa.x)*canvas.width, pa.y*canvas.height);
+      ctx.lineTo((1-pb.x)*canvas.width, pb.y*canvas.height);
+      ctx.stroke();
+    }
+    for(const p of lm){
+      ctx.beginPath();
+      ctx.arc((1-p.x)*canvas.width, p.y*canvas.height, 2.4, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(241,236,227,0.5)';
+      ctx.fill();
+    }
+
+    if(state && state.pointing){
+      const tip = lm[8];
+      const tx = (1-tip.x)*canvas.width, ty = tip.y*canvas.height;
+      const stepIndex = Math.min(NUM_STEPS - 1, Math.max(0, Math.floor((1 - tip.y) * NUM_STEPS)));
+      const hue = noteHue(stepIndex);
+      trail.push({ x: tx, y: ty, hue, life: 1 });
+    }
+  }
+
+  for(let i = trail.length - 1; i >= 0; i--){
+    const t = trail[i];
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, 10 * t.life + 2, 0, Math.PI*2);
+    ctx.fillStyle = `hsla(${t.hue}, 85%, 65%, ${t.life * 0.5})`;
+    ctx.fill();
+    t.life -= 0.035;
+    if(t.life <= 0) trail.splice(i, 1);
+  }
+
+  for(let i = bursts.length - 1; i >= 0; i--){
+    const b = bursts[i];
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+    ctx.strokeStyle = `hsla(${b.hue}, 90%, 70%, ${b.alpha})`;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    b.r += 5.5;
+    b.alpha -= 0.018;
+    if(b.alpha <= 0) bursts.splice(i, 1);
+  }
+}
+
+// ---------- Main loop ----------
+async function detectLoop(){
+  if(!running) return;
+  const now = performance.now();
+  let result = null;
+  try{
+    result = handLandmarker.detectForVideo(video, now);
+  }catch(e){ /* skip frame */ }
+
+  const landmarksList = result && result.landmarks ? result.landmarks : [];
+  const state = landmarksList.length ? classifyHand(landmarksList[0]) : null;
+
+  updateSound(state);
+  draw(landmarksList, state);
+
+  requestAnimationFrame(detectLoop);
+}
+
+async function start(){
+  beginBtn.disabled = true;
+  hint.textContent = 'waking up the hand tracker…';
+
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 960, height: 720 }, audio: false });
+    video.srcObject = stream;
+    await video.play();
+  }catch(e){
+    errorBox.classList.add('show');
+    return;
+  }
+
+  try{
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+    );
+    handLandmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
+      },
+      runningMode: "VIDEO",
+      numHands: 1
+    });
+  }catch(e){
+    hint.textContent = 'could not load the hand tracker — check your connection and reload.';
+    beginBtn.disabled = false;
+    return;
+  }
+
+  setupAudio();
+  await Tone.start();
+
+  startWrap.classList.add('hidden');
+  running = true;
+  detectLoop();
+}
+
+beginBtn.addEventListener('click', start);
+</script>
+</body>
+</html>
